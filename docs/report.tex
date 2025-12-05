@@ -190,12 +190,12 @@ The resulting rollouts, presented in Figure~\ref{fig:monte_carlo_simulations}, h
 \subsection{Considerations}
 The results presented in Section~\ref{sec:results} are very encouraging. The study provides a lightweight model made of only three small supporting layers and a single computationally heavier LSTM layer. The model, even if simple, remains highly \textbf{flexible} and can be adapted to different requirements.
 
-Indeed, the grid representation is entirely \textbf{tunable}. The approach can obviously be extended to any geographical region and the grid resolution can be fully adjusted: smaller cells provide more precise predictions but increase computational cost, as more steps are required to generate a trajectory. Moreover, the model is \textbf{fully parametric} with respect to its internal architecture: even a configuration with $32$ hidden units and a single layer proved sufficient to achieve strong performance. The model was trained in $10$ minutes and using a relatively small window size of $20$ steps; as shown in Section~\ref{sec:eval}, longer windows can further improve accuracy when more historical data are available, although at the cost of increased computation. Finally, although Figure~\ref{fig:monte_carlo_simulations} was generated using a large number of rollouts per sample, real scenarios can operate with far fewer simulations, as few as $5$ or $10$, without affecting performance, allowing the approach to remain efficient even under tight computational constraints.
+Indeed, the grid representation is entirely \textbf{tunable}. The approach can obviously be extended to any geographical region and the grid resolution can be fully adjusted: smaller cells provide more precise predictions but increase computational cost, as more steps are required to generate a trajectory. Moreover, the model is \textbf{fully parametric} with respect to its internal architecture: even a configuration with $32$ hidden units and a single layer proved sufficient to achieve strong performance. Training used a window size of just $20$ steps, completed in around $10$ minutes, and yielded a model under $50$ kB of space, small enough to be deployed even on a micro-controller. Lastly, a relatively large number of rollouts were employed to generate Figure~\ref{fig:monte_carlo_simulations}, but real scenarios can operate with far fewer simulations (even $1$, with a greedy approach) without affecting performance, making the approach efficient even under tight computational constraints.
 
 \subsection{Future work}
-The model was intentionally kept simple to maximize efficiency, which naturally introduces some \textbf{limitations}. One issue concerns \textbf{physical land boundaries}: since the model is never trained on land–sea information, as expected, it can occasionally predict trajectories that cross over land. A practical and efficient solution is to incorporate a \textit{sparse bitmap} marking sea or land, allowing the model to avoid invalid areas.
+The choice to prioritize model simplicity and efficiency naturally comes with certain \textbf{limitations}.
 
-Another difficulty arises near \textbf{ports}. Ship behavior becomes more irregular when approaching or leaving port areas, but the model has no explicit notion of where ports are located. A lightweight solution could be to add a boolean feature indicating whether a sample lies inside a port region.
+One issue concerns physical \textbf{land boundaries}. Since the model was not trained with land–sea information, it can occasionally generate trajectories that cross onto land. To prevent this, a practical and efficient solution is to include a \textit{sparse bitmap} distinguishing sea from land, actually enabling the model to avoid invalid regions. Another challenge emerges near \textbf{ports}, where ship behavior becomes more irregular due to arrivals, stays and departures. Because the model has no explicit notion of port locations, a lightweight improvement would be to add a boolean feature indicating whether a sample lies within a port area.
 
 Finally, the model could also support \textbf{anomaly detection}, an aspect not explored in this work. Given its probabilistic output, the likelihood of the true trajectory could be computed at each step; if this value falls below a chosen \textit{threshold}, also a tunable and setting-dependent parameter, the behavior could be flagged as anomalous.
 
@@ -219,5 +219,5 @@ In a world where models are becoming increasingly complex \cite{b1}, this work d
 
 \end{thebibliography}
 
-
 \end{document}
+
