@@ -1,0 +1,223 @@
+% Based on template for ICASSP-2010 paper; to be used with:
+%          02456.sty  - 02456 LaTeX style file adapted from ICASSP
+\documentclass{article}
+\usepackage{amsmath,graphicx,02456}
+\usepackage{url}
+\usepackage{hyperref}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\toappear{02456 Deep Learning, DTU Compute, Fall 2025}
+
+% Title.
+% ------
+\title{Computationally Efficient Recurrent Architectures for Discretized Trajectory Prediction in Resource-Constrained Settings}
+
+% Author names and student numbers
+% --------------------------------
+\name{%
+  \begin{tabular}{c}
+    Daniil Losev (s246416), Antonio Riverso (s252132), Andrea Sanvito (s251931)
+  \end{tabular}
+}
+\address{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+    \textbf{Trajectory prediction models are often based on large architectures and high-resolution spatial representations, making them unsuitable for embedded or resource-constrained systems. This work proposes an efficient, fully parametric sequence-to-one forecasting model designed to adapt to a wide range of computational budgets and operational needs. The model structure, window size, prediction horizon, hidden dimension, number of LSTM layers, grid resolution and even the number of Monte Carlo rollouts can all be tuned based on available resources. Despite operating with minimal configurations, such as a single LSTM layer with as few as 32 or 64 hidden units, the model maintains strong predictive performance. These results show that carefully designed lightweight architectures can provide reliable trajectory forecasting while remaining deployable in embedded or high-efficiency settings, such as drones or smart gadgets.}
+    
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+\subsection{Problem description}
+In recent years, progress in machine learning has been driven mainly by increasing model complexity: deeper architectures, wider layers, attention mechanisms and growing parameter counts. While these approaches improve accuracy in many domains, they come with very big computational complexity and energy requirements. Due to this, \textbf{efficiency} has often taken a back seat to raw performance. However, this trend is also trend contrast to the accelerating demand for models that operate directly on \textit{embedded} or \textit{low-power} devices, such as drones, wearables, smart sensors and autonomous edge platforms, where memory, energy and computational budgets are limited. In these settings, such complex architectures are for the most part impractical and impossible to deploy.
+
+\subsection{Goal}
+This work explores an alternative direction: instead of relying on large and sophisticated models, it is investigated how far it is possible to go with a minimalistic, highly efficient recurrent neural architecture designed specifically for constrained environments. The goal is not to push state-of-the-art accuracy through more performance, but to demonstrate that \textit{careful problem formulation} and \textit{structural simplifications} can produce models that are both \textbf{lightweight and effective}.
+
+In this specific study the task of short-term trajectory prediction, a common problem in settings such as robotics, autonomous vehicles, UAV navigation and smart environmental sensing. In long-horizon forecasting complex dynamics and planning are required; on the other side, \textbf{short-term next-step prediction} is central to reactive control, collision avoidance and low-latency navigation. These are the situations in which embedded inference is essential: computing the next move must be fast, cheap and reliable.
+
+\section{Methodology}
+\label{sec:method}
+
+\subsection{Data Wrangling}\label{WRANG}
+In this project, the \textit{AIS dataset} \cite{bAIS} is used. It provides millions of daily samples containing attributes such as timestamp, geographic coordinates, ship type, speed, and heading angle. Due to the large size of the dataset, only one week of data (from July 1st to July 7th, 2025) is considered. Since AIS data is known to be noisy, all samples are processed through a dedicated \textit{preprocessing} pipeline.
+
+The first stage is data \textbf{sanitization}: samples with missing values, invalid formatting or MMSIs not following standard conventions are removed. The dataset is then restricted to a square region around Denmark, bounded by longitudes $0$ to $20$ and latitudes $52$ to $60$.
+
+Additional \textbf{filtering} is employed to make sure only meaningful trajectories are kept: tracks with too few samples, insufficient displacement or very short duration are dropped.
+
+The remaining, valid tracks are then divided into \textit{segments} based on the time distance between samples. Each segment is linearly interpolated to obtain smooth trajectories and then resampled so that every new point occupies a grid cell adjacent to the previous one. To preserve temporal information, an additional attribute \texttt{dt} is added to each sample to represent the elapsed time relative to the previous.
+
+\subsection{Discretization}
+A key objective of this project is \textit{efficiency}. With that in mind, we move from the \textit{regression} task, predicting raw geographic coordinates, to a \textit{classification} one, where the space is transformed into a \textbf{grid} with a tunable resolution that can be adjusted as needed. In this study, a grid with cell dimensions of $0.01 \times 0.01$ degrees in latitude and longitude is adopted, corresponding to approximately one square kilometre per cell.
+
+Therefore, the data produced by the preprocessing pipeline described in Section~\ref{WRANG} are discretized into grid cell indices before being used for model training and inference.
+
+\subsection{Training Preprocessing}\label{PREPROC}
+To enable models to effectively learn underlying patterns, a final andstructured preprocessing pipeline is applied to the data.
+
+First, a small amount of \textbf{feature engineering} is applied: the course over ground (\textit{COG}) attribute is transformed into its sine and cosine components, to ensure continuity between $0^\circ$ and $360^\circ$, and two additional attributes, $dSOG$ and $dCOG$, are introduced to represent the variations, with respect to the previous sample, of speed over ground and course over ground.
+
+Subsequently, the dataset is first divided into \textit{training} and \textit{validation} splits, and then \textbf{normalized} using statistics computed exclusively on the training set, preventing \textit{data leakage}. Each attribute is normalized according to its nature: \textit{x}, \textit{y}, \textit{SOG} and \textit{dSOG} are linearly scaled, mapping them to the interval $[0,1]$; \textit{dt} is normalized logarithmically to account for long stationary periods; \textit{dCOG} is scaled by dividing by $\pi$, resulting in values within $[-1,1]$. Sine and cosine components of \textit{COG} already fall in the $[-1,1]$ range and therefore require no normalization.
+
+\subsection{Models}\label{MODELS}
+Every model receives as input a 10-dimensional vector, produced by the pre-processing pipeline described in Section~\ref{PREPROC}. Based on this input, the models perform two prediction tasks: a \textbf{classification} task over a $3 \times 3$ grid, representing the possible movements (remain in the same cell or move west, north, east, south or along their diagonal combinations), and a \textbf{regression} task to estimate all the remaining continuous attributes.
+
+
+\subsubsection{Baseline}
+As a baseline, we employed a simple, non-parametric model that predicts future vessel motion by averaging the most recent timesteps of the input trajectory. Given the last $N$ observed steps, it computes the mean of all kinematic features (e.g., speed, $\sin \theta$, $\cos \theta$) and uses this vector as the continuous regression prediction. For direction classification, the model extracts the averaged heading components and normalizes them to obtain a unit movement vector, which is then compared via cosine similarity against a predefined set of nine canonical directions arranged on the $3\times3$ grid. These similarities are scaled to produce the class logits. Despite its simplicity, this baseline provides an interpretable and robust lower bound by capturing short-term motion persistence through recent averaging alone.
+
+
+
+\subsubsection{Sequence to One LSTM}\label{sec:seq-to-one}
+As a first actual model, a \textit{Recurrent Neural Network} with \textbf{Long Short-Term Memory} (LSTM) cells is adopted, as LSTMs represent a strong baseline for sequential modeling tasks, and are also widely used in trajectory prediction thanks to their ability in capturing long-term temporal relationships. The architecture contains neither attention mechanisms nor gating-heavy multi-layer stacks.
+
+The model begins with a shallow \textbf{input-processing block} composed of a \textit{linear layer}, a \textit{ReLU activation}, and a \textit{LayerNorm} operation. This stage projects heterogeneous features (numeric attributes and ship-type embeddings) into a shared representation space, stabilizing training results and simplifying the input distribution before it is fed to the LSTM layer. The ship type is encoded through a compact \textit{embedding} layer, allowing the network to learn latent behavioural similarities between vessels.
+
+The \textbf{core} of the network consists of one or more stacked \textit{LSTM layers}. This component is responsible for modeling temporal patterns in the trajectory, but is, at the same time, the most computationally demanding part of the architecture.
+
+\begin{figure}[b]
+    \centering
+    \includegraphics[width=1\linewidth]{docs/images/one_step_lstm.png}
+    \caption{Architecture of the sequence-to-one model.}
+    \label{fig:seq2one_model}
+\end{figure}
+
+Finally, the network outputs are produced through several small, specialized \textbf{prediction heads}, consisting in one \textit{linear layer} per target group. A dedicated head predicts the discrete movement on the grid (\textit{classification}), whereas additional heads handle the continuous \textit{regression} targets. It is also important to notice that each head applies a different activation function, appropriate for the physical nature of its output (e.g., sigmoid for normalized speeds, tanh for trigonometric functions, softplus for non-negative time intervals). An example of this architecture is reported in Figure~\ref{fig:seq2one_model}.
+
+\subsubsection{Bidirectional, Sequence to Sequence, LSTM}
+As a reference for the performance limits of the sequence-to-one model, we constructed an expanded \textbf{Sequence-to-Sequence} architecture capable of predicting horizons equal in length to the input history.
+
+The architecture utilizes a \textbf{bidirectional} LSTM encoder, a design specifically chosen to mitigate dependency on recent inputs and foster a global understanding of the entire trajectory, compressing it into a robust latent vector, which is subsequently passed to a decoder responsible for autoregressively generating the future trajectory. To improve training stability and limit error accumulation, \textit{teacher forcing} is employed, probabilistically feeding ground-truth inputs to the decoder instead of its own past predictions. The teacher forcing ratio is linearly decayed over training (\textit{curriculum learning}), gradually shifting from guided to fully autoregressive generation and reducing susceptibility to hallucinations. 
+
+Furthermore, to enhance feature processing, the same \textit{input-processing block} described in Section~\ref{sec:seq-to-one} is employed in both the encoder and the decoder.
+
+\section{Results}
+\label{sec:results}
+
+\subsection{Evaluation}\label{sec:eval}
+To find the best trade-off between performance and efficiency, several configurations of the Sequence-to-One model are tested, varying the \textit{hidden dimension} and the \textit{number of hidden layers}. The baseline and Sequence-to-Sequence architectures (see Section~\ref{MODELS}) are used respectively as a lower and an upper performance bound.
+
+Models are \textit{first} compared consdering the \textbf{accuracy} of the \textbf{greedy next-step prediction}, with results reported in Table~\ref{tab:single-step-accuracy}.
+
+{
+\renewcommand{\arraystretch}{1.1}
+\begin{table}[b]
+    \centering
+    \begin{tabular}{|c|c|c|c|c|}
+        \hline
+        \textbf{Model} & \textbf{Dimension} & \textbf{Layers} & \textbf{Window} & \textbf{Accuracy} \\ \hline
+        
+        \noalign{\vskip 0.2cm} \hline
+
+        baseline & - & - & 20 & 37.00\% \\ \hline
+        
+        \noalign{\vskip 0.2cm} \hline
+        
+        seq2one & 32 & 1 & 20 & 80.82\% \\ \hline
+        seq2one & 32 & 4 & 20 & 80.42\% \\ \hline
+        seq2one & 64 & 1 & 20 & 81.60\% \\ \hline
+        seq2one & 64 & 2 & 20 & 81.65\% \\ \hline
+        seq2one & 128 & 1 & 20 & 82.99\% \\ \hline
+        seq2one & 128 & 2 & 20 & 82.73\% \\ \hline
+        seq2one & 256 & 1 & 20 & 82.24\% \\ \hline
+        seq2one & 128 & 1 & 100 & 84.88\% \\ \hline
+        
+        \noalign{\vskip 0.2cm} \hline
+        
+        seq2seq & 128 & 1 & 20 & 84.07\% \\ \hline
+    \end{tabular}
+    \caption{Accuracy metrics across different settings.}
+    \label{tab:single-step-accuracy}
+\end{table}
+}
+
+As expected, the baseline model only achieves an accuracy of $37\%$, thus providing a lower limit and highlighting the importance of learning actual data patterns. Regarding the Sequence-to-One model, even the smallest tested configuration ($32$ hidden units, $1$ layer) exceeds $80\%$ accuracy across trajectories. Increasing the hidden dimension to $64$ or $128$ produces a higher accuracy, almost hitting the $83\%$ threshold; increasing the number of LSTM layers does not produce relevant improvements and often leads to overfitting, as demonstrated by a lower validation accuracy. A higher window size was also tested, raising accuracy to nearly 85\%: such a long input sequence is however computationally inefficient and impractical in real scenarios. The \textit{Sequence-to-Sequence} model achieves a slightly higher accuracy, as expected from a more expressive and complex architecture. The small, $1\%$ difference between the two models confirms that the simpler Sequence-to-One model is more than valid for trajectory prediction.
+
+
+Models are then compared with metrics that focus on the quality of \textbf{long-term predictions}. To this end, \textbf{accuracy} over a window size of $40$ steps (or \textit{two hours}, on average) is computed, together with the \textbf{mean distance} (in cells) from the ground truth, and the results are shown in Table~\ref{tab:multi-step-accuracy}. At step $20$, the baseline model predicts only one third of all movements correctly, whereas the two models exceed one half. Moreover, where the baseline exhibits an average error above $25$ cells, the trained models remain at $4.55$ and $4.11$ cells. In practice, this implies that a 20-steps-ahead prediction (approximately 20 km) locates the ship, on average, within a circle of radius just above $4$ km. The same conclusions can be drawn when considering the $40$ steps-ahead prediction: the accuracy of the baseline model underlines the necessity of trained models, and the Seq-to-One model confirms itself as a valid contender when compared with the highly complex Seq-to-Seq model.
+
+{
+\renewcommand{\arraystretch}{1.1}
+\begin{table}[t]
+    \centering
+    \begin{tabular}{|c|c|c|c|c|c|c|}
+        \hline
+         & \multicolumn{2}{|c|}{\textbf{Baseline}} & \multicolumn{2}{|c|}{\textbf{Seq2One}} & \multicolumn{2}{|c|}{\textbf{Seq2Seq}} \\ \hline
+         \textbf{Step} & \textbf{Acc} & \textbf{Mean} & \textbf{Acc} & \textbf{Mean} & \textbf{Acc} & \textbf{Mean} \\ \hline
+        
+        \noalign{\vskip 0.2cm} \hline
+
+        1   & 37.15 &  0.70 & 73.30 &  0.35 & 78.27 & 0.28 \\ \hline
+        5   & 36.63 &  2.94 & 62.18 &  1.18 & 63.44 & 1.14 \\ \hline
+        10  & 35.74 &  5.83 & 56.43 &  2.14 & 57.95 & 2.11 \\ \hline
+
+        \noalign{\vskip 0.2cm} \hline
+        
+        \textbf{20}  & 34.25 & 11.84 & 52.51 &  4.55 & 53.84 & 4.11\\ \hline
+        
+        \noalign{\vskip 0.2cm} \hline
+        
+        \textbf{40}  & 31.64 & 25.26 & 48.82 & 11.49 & 48.23 & 9.21 \\ \hline
+    \end{tabular}
+    \caption{Multi-step accuracies and mean distances from truth, for the different models.}
+    \label{tab:multi-step-accuracy}
+\end{table}
+}
+
+\subsection{Simulation}
+
+To evaluate the generative capabilities and robustness of the \textit{Sequence-to-One LSTM} model, a \textbf{Monte Carlo simulation} framework is implemented. Unlike deterministic forecasting, this approach uses repeated stochastic rollouts to approximate the distribution of possible future trajectories. In the experiment, $75$ independent trajectory simulations are generated using $20$-step seeds taken from the validation set. Each rollout proceeds autoregressively: the model receives the previously predicted state, outputs a probability distribution over the nine grid movements, samples the next move and updates the vessel’s physical attributes (speed, course, and \textit{dt}) through the regression heads. The prediction horizon is set to $40$ steps, corresponding to approximately \textbf{two hours of travel}.
+
+
+The resulting rollouts, presented in Figure~\ref{fig:monte_carlo_simulations}, highlight several characteristic behaviors of the model. In the Top-Left example, even though the seed suggests a straight path while the real route includes a sharp turn, the model still manages to follow the turn instead of continuing straight, showing that it \textit{has learned} how vessels typically move in that area. In the Top-Right case, the predictions drift slightly toward the center of the channel, suggesting that the model has picked up the idea of keeping some distance from the coastline. The Bottom-Left example shows that the model maintains a \textit{high accuracy} when the trajectory is regular and stable. Lastly, the Bottom-Right example shows both limits and robustness: despite starting from basically stationary data, the model eventually predicts a reasonable northward movement, even if the path is not perfectly matched to the true one.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1\linewidth]{docs/images/montecarlo_simulations.png}
+    \caption{Monte Carlo simulations for a sequence-to-one model with 1 LSTM-layer and 64 hidden units.}
+    \label{fig:monte_carlo_simulations}
+\end{figure}
+
+\section{Discussion}
+\label{sec:discussion}
+\subsection{Considerations}
+The results presented in Section~\ref{sec:results} are very encouraging. The study provides a lightweight model made of only three small supporting layers and a single computationally heavier LSTM layer. The model, even if simple, remains highly \textbf{flexible} and can be adapted to different requirements.
+
+Indeed, the grid representation is entirely \textbf{tunable}. The approach can obviously be extended to any geographical region and the grid resolution can be fully adjusted: smaller cells provide more precise predictions but increase computational cost, as more steps are required to generate a trajectory. Moreover, the model is \textbf{fully parametric} with respect to its internal architecture: even a configuration with $32$ hidden units and a single layer proved sufficient to achieve strong performance. The model was trained in $10$ minutes and using a relatively small window size of $20$ steps; as shown in Section~\ref{sec:eval}, longer windows can further improve accuracy when more historical data are available, although at the cost of increased computation. Finally, although Figure~\ref{fig:monte_carlo_simulations} was generated using a large number of rollouts per sample, real scenarios can operate with far fewer simulations, as few as $5$ or $10$, without affecting performance, allowing the approach to remain efficient even under tight computational constraints.
+
+\subsection{Future work}
+The model was intentionally kept simple to maximize efficiency, which naturally introduces some \textbf{limitations}. One issue concerns \textbf{physical land boundaries}: since the model is never trained on land–sea information, as expected, it can occasionally predict trajectories that cross over land. A practical and efficient solution is to incorporate a \textit{sparse bitmap} marking sea or land, allowing the model to avoid invalid areas.
+
+Another difficulty arises near \textbf{ports}. Ship behavior becomes more irregular when approaching or leaving port areas, but the model has no explicit notion of where ports are located. A lightweight solution could be to add a boolean feature indicating whether a sample lies inside a port region.
+
+Finally, the model could also support \textbf{anomaly detection}, an aspect not explored in this work. Given its probabilistic output, the likelihood of the true trajectory could be computed at each step; if this value falls below a chosen \textit{threshold}, also a tunable and setting-dependent parameter, the behavior could be flagged as anomalous.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+In a world where models are becoming increasingly complex \cite{b1}, this work demonstrates that strong performance can still be achieved with simple and lightweight architectures, allowing deployment of machine learning models on a wide range of environments. The study highlights the value of reducing complexity when it does not provide significant benefits and encourages a shift toward more efficient model-design choices. Overall, it offers a concrete and experimentally validated example of how deliberate simplification can support the development of high-efficiency and embedded machine learning systems.
+
+
+\bibliographystyle{IEEEbib}
+\bibliography{template}
+
+
+\begin{thebibliography}{00}
+
+\bibitem{bAIS} Danish Maritime Authority, ``AIS Data from Danish Waters", 2025. [Online]. Available: \url{http://aisdata.ais.dk/}.
+
+\bibitem{b1} G. Menghani, ``Efficient Deep Learning: A Survey on Making Deep Learning Models Smaller, Faster, and Better", 2023. Available: \url{https://arxiv.org/abs/2106.08962}.
+
+\bibitem{b2} Code repository, hosted on GitHub. Available \href{https://github.com/andsanv/maritime-trajectory-prediction-in-high-efficiency-settings}{here}.
+
+\end{thebibliography}
+
+
+\end{document}
