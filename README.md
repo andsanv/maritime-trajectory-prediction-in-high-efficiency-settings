@@ -26,7 +26,7 @@ The model has been tested against a non-parametric baseline that averages recent
 The architecture of the sequence-to-one model is reported in the figure below.
 
 <p>
-  <img src="docs/images/one_step_lstm.png" width="70%"/>
+  <img src="docs/images/one_step_lstm.png" width="80%"/>
 </p>
 
 
@@ -64,7 +64,7 @@ Generative capabilities and robustness of the model were evaluated through Monte
 Each rollout proceeds autoregressively over a 40-step horizon (around 2 hours of travel): the model samples the movement from its predicted grid distribution at the previous step and updates the vessel's physical attributes through the regression heads.
 
 <p>
-  <img src="docs/images/montecarlo_simulations.png" width="100%"/>
+  <img src="docs/images/montecarlo_simulations.png" width="80%"/>
 </p>
 
 The rollouts highlight many learned behaviors, including sharp turns and staying far from the coastline.
